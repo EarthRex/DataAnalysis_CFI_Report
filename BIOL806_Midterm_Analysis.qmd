@@ -1,0 +1,470 @@
+---
+title: "Hubbard Brook Analysis"
+author: "Luke Nugent"
+format: html
+editor: visual
+code-fold: true
+---
+
+# Data
+
+## Canopy Trees
+
+Here we load the "Canopy Trees" data set pulled from the BioTime website (). This data set contains estimated values for **Above Ground Biomass** (Units Not Specified) and **Abundance** (Stem / Individual Counts) by available species in Watershed 6 of the Hubbard Brook Experimental Forest (Total Area: 13.3 Hectares or `r print(round(13.3*2.471, digits = 1))`) in Northern New Hampshire. The data is categorized as **"Canopy Trees"** on account of the criteria used to generate estimates, all estimates were calculated from fixed area plots (Num. of Plots: 208, Area: 25 x 25 m) where only trees greater than (or equal to) 10 cm in diameter at 137 cm up the trunk of the tree.
+
+::: callout-note
+When characterizing forest structure the "Canopy" layer is often subdivided by "light availability" levels. The presence of trees in three distinct levels ("Overstory" - High Canopy, "Midstory" - Mid Canopy, and "Understory" - Low Canopy) is usually employed to describe structure dynamics. **In this study we do NOT discriminate amongst these canopy levels** due to the criteria. An added structural layer that is often ignored in this context is the *regeneration layer* that occupies the forest floor, the distinction between **Canopy** and **Regen** (Abbrev. Regeneration) inventory data will be important for this study.
+:::
+
+### Load and Describe Data
+
+```{r, message=FALSE, echo=FALSE}
+# Initialize Relevant Packages
+library(tidyverse)
+
+# Load the Forest Inventory Data for "Canopy" Trees (1977 - 2017):
+Idf_Canopy <- read_csv("HubBrook_Inventory_77_17.csv")
+
+# Remove initial NA's:
+Idf_Canopy_NoNA <- Idf_Canopy |> 
+  select(ABUNDANCE, SAMPLE_DESC, valid_name, BIOMAS) |> 
+  drop_na()
+
+# Check to see if values were dropped:
+Idf_Canopy_CntNA <- as.double(dim(Idf_Canopy)[1] - dim(Idf_Canopy_NoNA)[1])
+
+# glimpse() the data to determine the use of each variable:
+glimpse(Idf_Canopy)
+```
+
+Estimates were measured and calculated for 9 of 40 years that the study encompasses (Indiv. Years: `r unique(Idf_Canopy$SAMPLE_DESC)`). The variables we have to utilize are `r names(Idf_Canopy)`. The only relevant variables are `r names(Idf_Canopy[1:4])`, we will need to reformat the data to more simply aggregate "yearly species" values.
+
+## Regeneration
+
+Here we load two "Regeneration" data sets pulled from the BioTime website (). These data sets contain estimated values for **Above Ground Biomass** (Units Not Specified) and **Abundance** (Stem / Individual Counts) by available species in Watershed 6 of the Hubbard Brook Experimental Forest (Total Area: 13.3 Hectares or `r print(round(13.3*2.471, digits = 1))`) in Northern New Hampshire. The data is categorized as **"Regeneration"** on account of the criteria used to generate estimates, only trees between 2 and 10 cm in diameter were measured.
+
+### Load and Describe Data:
+
+#### Years: 1982 and 1987
+
+```{r, message=FALSE}
+# Load the Forest Inventory Data for "Regen" Trees (1982 - 1987):
+Idf_Regen1 <- read_csv("HubBrook_StemDen_82_87.csv")
+
+# Remove initial NA's:
+Idf_Regen1_NoNA <- Idf_Regen1 |> 
+  select(ABUNDANCE, SAMPLE_DESC, valid_name, BIOMAS) |> 
+  drop_na()
+
+# Check to see if values were dropped:
+Idf_Regen1_CntNA <- as.double(dim(Idf_Regen1)[1] - dim(Idf_Regen1_NoNA)[1])
+
+# glimpse() the data to determine the use of each variable:
+glimpse(Idf_Regen1)
+```
+
+Estimates were measured and calculated for 2 of 40 years that the study encompasses (Indiv. Years: `r unique(Idf_Regen1$SAMPLE_DESC)`). The variables we have to utilize are `r names(Idf_Regen1)`. The only relevant variables are `r names(Idf_Regen1[1:4])`, we will need to join this set to the accompanying "Regen2" data, and reformat them to more simply aggregate "yearly species" values.
+
+#### Years: 1992 to 2017
+
+```{r, message=FALSE}
+# Load the Forest Inventory Data for "Regen" Trees (1992 - 2017):
+Idf_Regen2 <- read_csv("HubBrook_StemDen_92_17.csv")
+
+# Remove initial NA's:
+Idf_Regen2_NoNA <- Idf_Regen2 |> 
+  select(ABUNDANCE, SAMPLE_DESC, valid_name, BIOMAS) |> 
+  drop_na()
+
+# Check to see if values were dropped:
+Idf_Regen2_CntNA <- as.double(dim(Idf_Regen2)[1] - dim(Idf_Regen2_NoNA)[1])
+
+# glimpse() the data to determine the use of each variable:
+glimpse(Idf_Regen2)
+```
+
+Estimates were measured and calculated for 6 of 40 years that the study encompasses (Indiv. Years: `r unique(Idf_Regen2$SAMPLE_DESC)`). The variables we have to utilize are `r names(Idf_Regen2)`. The only relevant variables are `r names(Idf_Regen2[1:4])`, we will need to join this set to the accompanying "Regen2" data, and reformat them to more simply aggregate "yearly species" values.
+
+## Synthesize
+
+Our goals in cleaning the data are to create two working data frame objects that can be used to answer our research questions. These data frames will contain new values and renamed variables for ease of use, they are: 1) "Idf_Diversity", will aggregate values by year and structure (Canopy vs. Regen) - "Species Richness" (Var. = SppRich), the number of unique species - "Shannon's Diversity Index" (Var. = SHDiv), the index value representing the "chance of selecting a *different* species when looking at a community" 2) "Idf_TolDiv", will aggregate values by year, structure, and
+
+### Clean
+
+```{r, warning=FALSE, message=FALSE}
+# Create Data Cleaning Function:
+Clean_Idfs <- function(Idf_Can,
+                       Idf_Reg1,
+                       Idf_Reg2){
+  
+  ##### 1) Compile dfs:
+  Clean_dfsList <- list(Idf_Can = Idf_Can,
+                        Idf_Reg1 = Idf_Reg1,
+                        Idf_Reg2 = Idf_Reg2)
+  
+  ##### 2) Iterate Cleaning Script:
+  Cleaned_dfsList <- lapply(Clean_dfsList, function(df){
+    
+    ### a) Grab relevant variables from the data sets:
+    
+    df_Vars <- df[c("SAMPLE_DESC", "valid_name", "BIOMAS", "ABUNDANCE")]
+    
+    ### b) Reformat new variables to use for filtering and grouping:
+    ###       - Year: factored and re leveled
+    ###       - TreeCat: categorize trees by "Deciduous" (broadleaf) 
+    ###                                   or "Coniferous" (evergreen)
+    ###       - Spp_Fam: categorize trees by their "family"
+    ###       - Spp_Com: rename trees according to their common name
+    ###       - Spp_Tol: categorize trees according to their "shade tolerance"
+    
+    df_VarsVals <- df_Vars  |> 
+      mutate(Year = factor(SAMPLE_DESC)) |> 
+      rename("Stems" = "ABUNDANCE",
+             "Abv_Biomass" = "BIOMAS",
+             "Spp" = "valid_name") |> 
+      mutate(Year = fct_relevel(Year, c("1977","1982","1987","1992", 
+                                  "1997", "2002", "2007", "2012", "2017")),
+             TreeCat = fct_recode(Spp,
+                                  "Deciduous" = "Betula alleghaniensis",
+                                  "Deciduous" = "Betula cordifolia",
+                                  "Deciduous" = "Betula papyrifera",
+                                  "Deciduous" = "Fagus grandifolia",
+                                  "Deciduous" = "Fraxinus americana",
+                                  "Coniferous" = "Abies balsamea",
+                                  "Coniferous" = "Picea rubens",
+                                  "Coniferous" = "Tsuga canadensis",
+                                  "Deciduous" = "Prunus pensylvanica",
+                                  "Deciduous" = "Prunus serotina",
+                                  "Deciduous" = "Sorbus americana",
+                                  "Deciduous" = "Acer pensylvanicum",
+                                  "Deciduous" = "Acer rubrum",
+                                  "Deciduous" = "Acer saccharum",
+                                  "Deciduous" = "Acer spicatum",
+                                  "Deciduous" = "Amelanchier"),
+             Spp_Fam = fct_recode(Spp,
+                                  "Betula" = "Betula alleghaniensis",
+                                  "Betula" = "Betula cordifolia",
+                                  "Betula" = "Betula papyrifera",
+                                  "Fagus" = "Fagus grandifolia",
+                                  "Fraxinus" = "Fraxinus americana",
+                                  "Abies" = "Abies balsamea",
+                                  "Picea" = "Picea rubens",
+                                  "Tsuga" = "Tsuga canadensis",
+                                  "Prunus" = "Prunus pensylvanica",
+                                  "Prunus" = "Prunus serotina",
+                                  "Fraxinus" = "Sorbus americana",
+                                  "Acer" = "Acer pensylvanicum",
+                                  "Acer" = "Acer rubrum",
+                                  "Acer" = "Acer saccharum",
+                                  "Acer" = "Acer spicatum",
+                                  "Shrubs" = "Amelanchier"),
+             Spp_Com = fct_recode(Spp,
+                                  "Yellow Birch" = "Betula alleghaniensis",
+                                  "Mount. Birch" = "Betula cordifolia",
+                                  "White Birch" = "Betula papyrifera",
+                                  "American Beech" = "Fagus grandifolia",
+                                  "White Ash" = "Fraxinus americana",
+                                  "Balsam Fir" = "Abies balsamea",
+                                  "Red Spruce" = "Picea rubens",
+                                  "East. Hemlock" = "Tsuga canadensis",
+                                  "Pin Cherry" = "Prunus pensylvanica",
+                                  "Black Cherry" = "Prunus serotina",
+                                  "Mount. Ash" = "Sorbus americana",
+                                  "Striped Maple" = "Acer pensylvanicum",
+                                  "Red Maple" = "Acer rubrum",
+                                  "Sugar Maple" = "Acer saccharum",
+                                  "Mount. Maple" = "Acer spicatum",
+                                  "ServiceBerry" = "Amelanchier"),
+             Spp_Tol = fct_recode(Spp,
+                                  "Mid Tolerant" = "Betula alleghaniensis",
+                                  "Very Intolerant" = "Betula cordifolia",
+                                  "Very Intolerant" = "Betula papyrifera",
+                                  "Very Tolerant" = "Fagus grandifolia", 
+                                  "Mid Tolerant" = "Fraxinus americana",
+                                  "Very Tolerant" = "Abies balsamea",
+                                  "Tolerant" = "Picea rubens",
+                                  "Very Tolerant" = "Tsuga canadensis",
+                                  "Very Intolerant" = "Prunus pensylvanica",
+                                  "Intolerant" = "Prunus serotina",
+                                  "Mid Tolerant" = "Sorbus americana",
+                                  "Mid Tolerant" = "Acer pensylvanicum",
+                                  "Tolerant" = "Acer rubrum",
+                                  "Very Tolerant" = "Acer saccharum",
+                                  "Mid Tolerant" = "Acer spicatum",
+                                  "Mid Tolerant" = "Amelanchier"),
+             Spp_Tol = fct_relevel(Spp_Tol,
+                                   c("Very Tolerant", "Tolerant", "Mid Tolerant",
+                                     "Intolerant", "Very Intolerant"))) |> 
+      select(Year, Stems, Abv_Biomass, Spp_Com, Spp_Tol, Spp_Fam, TreeCat)
+    
+    ### c) Add aggregated values by Year (used for calculating proportions):
+    
+    df_ModValsJK <- df_VarsVals |> 
+      group_by(Year) |> 
+      summarise(Tot_Stems_byYear = sum(Stems),
+                Tot_AbvBio_byYear = sum(Abv_Biomass))
+    
+    ### d) Join these aggregated values to the cleaned data set and create new variables:
+    
+    df_VarsValsMod <- full_join(df_VarsVals, 
+                                df_ModValsJK, 
+                                by = c("Year")) |> 
+      mutate(Rel_AbvBiomass = round((Abv_Biomass/Tot_AbvBio_byYear)*100,
+                                    digits = 2),
+             Rel_Abund = round((Stems/Tot_Stems_byYear), digits = 3),
+             Rel_Stems = round((Stems/Tot_Stems_byYear)*100, digits = 2))
+    
+    ### e) Calculate Diversity Metrics by Year:
+    
+    Idf_Diversity <- df_VarsValsMod |> 
+      group_by(Year) |> 
+      summarise(Rel_Stems_SumCheck = sum(Rel_Stems),
+                Rel_Abund_SumCheck = sum(Rel_Abund),
+                Rel_Biomass_SumCheck = sum(Rel_AbvBiomass),
+                SppRich = n(),
+                SHDiv = sum(Rel_Abund*abs(log(exp(Rel_Abund))))) |> 
+      select(Year, SHDiv, SppRich)
+    
+    ### f) Calculate Diversity Metrics by Year and Shade Tolerance:
+    
+    Idf_TolDiv1 <- df_VarsValsMod |> 
+      group_by(Year, Spp_Tol) |> 
+      summarise(Rel_Stems_SumCheck = sum(Rel_Stems),
+                Rel_Abund_SumCheck = sum(Rel_Abund),
+                Rel_Biomass_SumCheck = sum(Rel_AbvBiomass),
+                SppRich = n(),
+                SHDiv = sum(Rel_Abund*abs(log(exp(Rel_Abund))))*100) |> 
+      select(Year, Spp_Tol, SHDiv, SppRich)
+    
+    ### g) Calculate Diversity Metrics by Year, Shade Tolerance, and Tree Category:
+    
+    Idf_TolDiv2 <- df_VarsValsMod |> 
+      group_by(Year, Spp_Tol, TreeCat) |> 
+      summarise(Rel_Stems_SumCheck = sum(Rel_Stems),
+                Rel_Abund_SumCheck = sum(Rel_Abund),
+                Rel_Biomass_SumCheck = sum(Rel_AbvBiomass),
+                SppRich = n(),
+                SHDiv = sum(Rel_Abund*abs(log(exp(Rel_Abund))))) |> 
+      select(Year, Spp_Tol, TreeCat, SHDiv, SppRich)
+    
+    ### h) Return these constructed outputs by their respective data types:
+    
+    return(list(Idf_TolDiv1 = Idf_TolDiv1,
+                Idf_TolDiv2 = Idf_TolDiv2,
+                Idf_Diversity = Idf_Diversity,
+                Idf_Cleaned = df_VarsValsMod))
+  })
+  
+  ##### 3) Return our collection of cleaned data frames for each data set
+  
+  ##### a) Synthesize the Cleaned Output of Canopy / Regen data:
+  
+  Idf_CleanFin <- rbind(Cleaned_dfsList$Idf_Can$Idf_Cleaned |> 
+                          mutate(Strata = "Canopy",
+                                 Tot_AbvBio_TenThou = round(Tot_AbvBio_byYear/10000,
+                                                            digits = 1)),
+                        
+                        rbind(Cleaned_dfsList$Idf_Reg1$Idf_Cleaned,
+                              Cleaned_dfsList$Idf_Reg2$Idf_Cleaned) |> 
+                          mutate(Strata = "Regen",
+                                 Tot_AbvBio_TenThou = round(Tot_AbvBio_byYear/100000,
+                                                            digits = 1)))
+
+  ##### b) Synthesize the Diversity Output of Canopy / Regen data:
+  
+  Idf_DivFin <- rbind(Cleaned_dfsList$Idf_Can$Idf_Diversity |> 
+                        mutate(Strata = "Canopy",
+                               SHDiv = round(SHDiv, digits = 3)) |> 
+                        select(Year, Strata, SppRich, SHDiv),
+                      
+                      rbind(Cleaned_dfsList$Idf_Reg1$Idf_Diversity,
+                            Cleaned_dfsList$Idf_Reg2$Idf_Diversity) |> 
+                        mutate(Strata = "Regen",
+                               SHDiv = round(SHDiv, digits = 3)) |> 
+                        select(Year, Strata, SppRich, SHDiv))
+
+  ##### c) Synthesize the Diversity Output of Canopy / Regen data:
+  
+  Idf_TolFin1 <- rbind(Cleaned_dfsList$Idf_Can$Idf_TolDiv1 |>
+                        mutate(SHDiv = round(SHDiv, digits = 4),
+                               Strata = "Canopy") |> 
+                        select(Year, Spp_Tol, Strata, SppRich, SHDiv),
+                      
+                      rbind(Cleaned_dfsList$Idf_Reg1$Idf_TolDiv1,
+                            Cleaned_dfsList$Idf_Reg2$Idf_TolDiv1) |> 
+                        mutate(Strata = "Regen",
+                               SHDiv = round(SHDiv, digits = 4)) |> 
+                        select(Year, Spp_Tol, Strata, SppRich, SHDiv))
+  
+  ##### d) Synthesize the Diversity Output of Canopy / Regen data:
+  
+  Idf_TolFin2 <- rbind(Cleaned_dfsList$Idf_Can$Idf_TolDiv2 |>
+                        mutate(SHDiv = round(SHDiv, digits = 4),
+                               Strata = "Canopy") |> 
+                        select(Year, Spp_Tol, TreeCat, Strata, SppRich, SHDiv),
+                      
+                      rbind(Cleaned_dfsList$Idf_Reg1$Idf_TolDiv2,
+                            Cleaned_dfsList$Idf_Reg2$Idf_TolDiv2) |> 
+                        mutate(Strata = "Regen",
+                               SHDiv = round(SHDiv, digits = 4)) |> 
+                        select(Year, Spp_Tol, TreeCat, Strata, SppRich, SHDiv))
+  
+  ##### 4) Return our finalized outputs:
+  
+  return(list(Idf_CleanFin = Idf_CleanFin,
+              Idf_DivFin = Idf_DivFin,
+              Idf_TolFin1 = Idf_TolFin1,
+              Idf_TolFin2 = Idf_TolFin2))
+}
+
+# Run our Cleaning Script:
+Idf_Cleaned <- Clean_Idfs(Idf_Can = Idf_Canopy,
+                          Idf_Reg1 = Idf_Regen1,
+                          Idf_Reg2 = Idf_Regen2)
+
+# Remove large custom function:
+rm(Clean_Idfs)
+```
+
+## Data Diff. Table
+
+These data in both sets are our **Regen** data points for the site, but key differences exist between the sampling intensity and methods compared to **Canopy** data from the same site:
+
+```{r}
+library(flextable)
+
+flextable(data = data.frame(`Study Num.` = c(234, 867, 868),
+                            `Num. of Years` = c(9, 2, 6),
+                            `Data Type` = c("Canopy", "Regen", "Regen")))
+flextable(data = data.frame(Year = c("1977", "1982", "1987", "1992", "1997", 
+                                     "2002", "2007", "2012", "2017")))
+
+flextable(data = data.frame(Year = as.factor(seq(1977, 2017, by = 5)),
+                            Canopy = c("Yes", "Yes", "Yes", "Yes", "Yes",
+                                       "Yes", "Yes", "Yes", "Yes"),
+                            `Regen. (One)` = c("No", "Yes", "Yes", "No", "No",
+                                               "No", "No", "No", "No"),
+                            `Regen. (Two)` = c("No", "No", "No", "Yes", "Yes",
+                                               "Yes", "Yes", "Yes", "Yes")))
+
+```
+
+## Analysis
+
+### Data Viz. 1
+
+```{r}
+ggplot(data = Idf_Cleaned$Idf_TolFin1 |> 
+         pivot_longer(cols = c("SHDiv", "SppRich"),
+                      names_to = "Variable",
+                      values_to = "Value") |> 
+         mutate(Variable = ifelse(Variable == "SHDiv",
+                                  "Shannon's Diversity",
+                                  ifelse(Variable == "SppRich",
+                                         "Num. of Species",
+                                         NA)),
+                `Shade Tolerance` = ifelse(Spp_Tol %in% c("Very Tolerant",
+                                              "Tolerant",
+                                              "Mid Tolerant"),
+                                 "Tolerant",
+                                 ifelse(Spp_Tol %in% c("Intolerant",
+                                                     "Very Intolerant"),
+                                        "Intolerant",
+                                        NA)),
+                Value = as.double(Value)),
+       aes(x = Year, y = Value)) +
+  geom_bar(aes(colour = `Shade Tolerance`,
+               fill = `Shade Tolerance`),
+           stat = "identity") +
+  facet_grid(rows = vars(Variable),
+             cols = vars(Strata),
+             scales = "free",
+             switch = "y") +
+  labs(title = "Diversity Profiles of The Canopy and Regen. Layers",
+       y = "",
+       x = "Years (0 - 40)") +
+  scale_fill_manual(values = c("Tolerant" = "steelblue",
+                                "Intolerant" = "sienna")) +
+  scale_color_manual(values = c("Tolerant" = "steelblue",
+                                "Intolerant" = "sienna")) +
+  theme(axis.text.x = element_text(angle = 45))
+```
+
+### Data Viz. 2
+
+```{r}
+ggplot(data = Idf_Cleaned$Idf_TolFin2 |> 
+         filter(Spp_Tol %in% c("Very Tolerant", "Tolerant", "Mid Tolerant")) |> 
+         mutate(Spp_Tol2 = ifelse(Spp_Tol == "Very Tolerant",
+                                           "High",
+                                           ifelse(Spp_Tol == "Tolerant",
+                                                  "Mid",
+                                                  ifelse(Spp_Tol == "Mid Tolerant",
+                                                  "Low",
+                                                  NA))),
+                Spp_Tol2 = factor(Spp_Tol2),
+                `Shade Tolerance` = fct_relevel(Spp_Tol2, c("High", "Mid", "Low")),
+                `Tree Taxa.` = TreeCat),
+       aes(x = Year, y = SHDiv)) +
+  geom_bar(aes(colour = `Tree Taxa.`,
+               fill = `Tree Taxa.`),
+           stat = "identity") +
+  facet_grid(rows = vars(`Shade Tolerance`),
+             cols = vars(Strata),
+             scales = "free",
+             switch = "y") +
+  labs(title = "Change in Diversity by Taxa in The Highest Shade Tolerant Species",
+       y = "Subset Levels of Shade Tolerant Species",
+       x = "Years (0 - 40)") +
+  scale_fill_manual(values = c("Deciduous" = "steelblue",
+                                "Coniferous" = "sienna")) +
+  scale_color_manual(values = c("Deciduous" = "steelblue",
+                                "Coniferous" = "sienna")) +
+  theme(axis.text.x = element_text(angle = 45))
+```
+
+### Data Viz. 3
+
+```{r}
+ggplot(data = Idf_Cleaned$Idf_CleanFin |> 
+         rename("Above-Ground Biomass" = "Rel_AbvBiomass",
+                "Abundance" = "Rel_Stems") |> 
+         pivot_longer(cols = c("Above-Ground Biomass", "Abundance"),
+                      names_to = "Variable",
+                      values_to = "Value") |> 
+         mutate(`Family` = fct_relevel(Spp_Fam,
+                                           c("Tsuga", "Picea", "Abies", "Shrubs",
+                                             "Fraxinus", "Prunus", "Betula", 
+                                             "Acer", "Fagus"))), 
+       aes(x = Year, y = Value)) +
+  geom_bar(aes(fill = `Family`),
+           stat = "identity") +
+  facet_grid(rows = vars(Variable),
+             cols = vars(Strata),
+             switch = "y") +
+  labs(title = "Proportional Abundance of Dec. and Conif. Taxa",
+       y = "Prop. (%) of Total in Year",
+       x = "Years (0 - 40)") +
+  scale_fill_manual(values = c("Tsuga" = "sienna", 
+                               "Picea" = "sienna", 
+                               "Abies" = "sienna",
+                               "Shrubs" = "seagreen",
+                               "Fraxinus" = "seagreen", 
+                               "Prunus" = "seagreen",
+                               "Betula"= "seagreen",
+                               "Acer" = "wheat",
+                               "Fagus" = "steelblue")) +
+  theme(axis.text.x = element_text(angle = 45))
+```
+
+### Model 1
+
+```{r}
+
+```
+
+### Model 2
+
+```{r}
+
+```
